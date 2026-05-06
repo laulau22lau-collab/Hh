@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK Direct
 
 on:
   push:
@@ -20,13 +20,58 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Create Gradle Wrapper files
+      - name: Create full Android project structure
         run: |
-          # إنشاء مجلد gradle/wrapper
+          # إنشاء مجلدات المشروع
+          mkdir -p app/src/main/java/com/example/ma3allem
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
           mkdir -p gradle/wrapper
-          # تحميل gradle-wrapper.jar من المصدر الرسمي
-          curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar
-          # إنشاء ملف gradle-wrapper.properties
+
+          # 1. settings.gradle.kts
+          cat > settings.gradle.kts << 'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Ma3allemk"
+          include(":app")
+          EOF
+
+          # 2. build.gradle.kts (root)
+          cat > build.gradle.kts << 'EOF'
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath("com.android.tools.build:gradle:8.2.0")
+                  classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.10")
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          tasks.register("clean", Delete::class) {
+              delete(rootProject.buildDir)
+          }
+          EOF
+
+          # 3. gradle-wrapper.properties
           cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -34,17 +79,182 @@ jobs:
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
-          # إنشاء سكريبت gradlew (لينكس)
+
+          # 4. gradlew script
           cat > gradlew << 'EOF'
           #!/bin/sh
           exec java -cp "$(dirname "$0")/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"
           EOF
           chmod +x gradlew
-          # إنشاء gradlew.bat (للويندوز - اختياري)
-          echo '@echo off
-          java -cp "%~dp0\gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain %*' > gradlew.bat
 
-      - name: Build Debug APK
+          # 5. app/build.gradle.kts
+          cat > app/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application")
+              id("kotlin-android")
+          }
+          android {
+              namespace = "com.example.ma3allem"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.example.ma3allem"
+                  minSdk = 23
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("com.google.android.material:material:1.11.0")
+              implementation("androidx.work:work-runtime-ktx:2.9.0")
+          }
+          EOF
+
+          # 6. AndroidManifest.xml
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+              <application
+                  android:allowBackup="true"
+                  android:label="مجد معلمك"
+                  android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          # 7. MainActivity.kt
+          cat > app/src/main/java/com/example/ma3allem/MainActivity.kt << 'EOF'
+          package com.example.ma3allem
+          import android.Manifest
+          import android.content.pm.PackageManager
+          import android.os.Build
+          import android.os.Bundle
+          import android.widget.Button
+          import android.widget.Toast
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.app.ActivityCompat
+          import androidx.core.content.ContextCompat
+          import androidx.work.*
+          import java.util.concurrent.TimeUnit
+          class MainActivity : AppCompatActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                          ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+                      }
+                  }
+                  startNotifications()
+                  findViewById<Button>(R.id.btnStart).setOnClickListener {
+                      startNotifications()
+                      Toast.makeText(this, "تم تشغيل الإشعارات كل نصف ساعة", Toast.LENGTH_SHORT).show()
+                  }
+              }
+              private fun startNotifications() {
+                  val workRequest = PeriodicWorkRequestBuilder<NotificationWorker>(30, TimeUnit.MINUTES).build()
+                  WorkManager.getInstance(this).enqueueUniquePeriodicWork("mock_notifications", ExistingPeriodicWorkPolicy.REPLACE, workRequest)
+              }
+          }
+          EOF
+
+          # 8. NotificationWorker.kt
+          cat > app/src/main/java/com/example/ma3allem/NotificationWorker.kt << 'EOF'
+          package com.example.ma3allem
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.content.Context
+          import androidx.core.app.NotificationCompat
+          import androidx.work.Worker
+          import androidx.work.WorkerParameters
+          import kotlin.random.Random
+          class NotificationWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
+              override fun doWork(): Result {
+                  showNotification(getRandomMessage())
+                  return Result.success()
+              }
+              private fun getRandomMessage(): String {
+                  val messages = listOf(
+                      "يلعن ابوك يا ابن الكلب", "انت ابن كلب يا متخلف", "تعال كلو وجهي وجعك",
+                      "بدي وجعك يا رخم", "جهز حالك راح تجيك صاعقة", "بتروح باليخت وبنيمك ع التخت",
+                      "يا حمار مين ضايقك", "انتهت المهلة يا جبان", "اهلا بالخاين جاي تندب؟",
+                      "تصفيق لك على الفشل الذريع", "ما تطلع عوجهك عيب", "الزمن دوار .. وانت قاعد مكانك"
+                  )
+                  return messages[Random.nextInt(messages.size)]
+              }
+              private fun showNotification(message: String) {
+                  val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                  val channelId = "mock_channel"
+                  if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                      manager.createNotificationChannel(NotificationChannel(channelId, "إشعارات التحدي", NotificationManager.IMPORTANCE_HIGH))
+                  }
+                  val notification = NotificationCompat.Builder(applicationContext, channelId)
+                      .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                      .setContentTitle("رسالة من مجد معلمك")
+                      .setContentText(message)
+                      .setPriority(NotificationCompat.PRIORITY_HIGH)
+                      .build()
+                  manager.notify(System.currentTimeMillis().toInt(), notification)
+              }
+          }
+          EOF
+
+          # 9. activity_main.xml
+          cat > app/src/main/res/layout/activity_main.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent" android:layout_height="match_parent"
+              android:gravity="center" android:orientation="vertical" android:padding="32dp">
+              <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                  android:text="👑 مجد معلمك" android:textSize="28sp" android:textStyle="bold"
+                  android:layout_marginBottom="32dp"/>
+              <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                  android:text="كل نصف ساعة راح توصلك رسالة" android:textSize="16sp"
+                  android:layout_marginBottom="24dp"/>
+              <Button android:id="@+id/btnStart" android:layout_width="wrap_content"
+                  android:layout_height="wrap_content" android:text="ابدأ الإهانة"
+                  android:backgroundTint="#D32F2F"/>
+          </LinearLayout>
+          EOF
+
+          # 10. strings.xml
+          cat > app/src/main/res/values/strings.xml << 'EOF'
+          <resources>
+              <string name="app_name">مجد معلمك</string>
+          </resources>
+          EOF
+
+          # 11. local.properties
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Download Gradle Wrapper JAR
+        run: |
+          curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar
+
+      - name: Build APK
         run: ./gradlew assembleDebug
 
       - name: Upload APK
