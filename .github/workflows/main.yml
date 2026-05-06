@@ -20,8 +20,29 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Create Gradle Wrapper files
+        run: |
+          # إنشاء مجلد gradle/wrapper
+          mkdir -p gradle/wrapper
+          # تحميل gradle-wrapper.jar من المصدر الرسمي
+          curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar
+          # إنشاء ملف gradle-wrapper.properties
+          cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+          # إنشاء سكريبت gradlew (لينكس)
+          cat > gradlew << 'EOF'
+          #!/bin/sh
+          exec java -cp "$(dirname "$0")/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"
+          EOF
+          chmod +x gradlew
+          # إنشاء gradlew.bat (للويندوز - اختياري)
+          echo '@echo off
+          java -cp "%~dp0\gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain %*' > gradlew.bat
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug
@@ -30,4 +51,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Ma3allemk-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
